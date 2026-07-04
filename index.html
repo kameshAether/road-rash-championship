@@ -4,12 +4,13 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Road Rash - Motorcycle Fighting Championship</title>
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&display=swap" rel="stylesheet">
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; user-select: none; }
 body {
   background: linear-gradient(135deg, #1a0000 0%, #2d0000 50%, #0a0a0a 100%);
   display: flex; justify-content: center; align-items: center;
-  min-height: 100vh; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+  min-height: 100vh; font-family: 'Orbitron', 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
   overflow: hidden; color: white;
 }
 #gameContainer {
@@ -34,7 +35,7 @@ body {
 .btn {
   margin-top: 18px; padding: 14px 44px; font-size: 20px; font-weight: bold;
   background: linear-gradient(180deg, #ff4444, #aa0000); color: white; border: 2px solid #ff6666;
-  border-radius: 8px; cursor: pointer; font-family: inherit; text-transform: uppercase; letter-spacing: 2px;
+  border-radius: 8px; cursor: pointer; font-family: 'Orbitron', inherit; text-transform: uppercase; letter-spacing: 2px;
   box-shadow: 0 4px 15px rgba(255,50,50,0.5); transition: all 0.15s;
 }
 .btn:hover { transform: translateY(-2px); box-shadow: 0 6px 25px rgba(255,50,50,0.7); background: linear-gradient(180deg, #ff5555, #cc0000); }
@@ -536,7 +537,9 @@ const LANE_W = ROAD_W/5;
 // ==================== UPDATE ====================
 function update(dt) {
   if (!G.running || G.paused) return;
-  const R = G.race, P = G.player;
+  let R = G.race || {};
+  let P = G.player;
+  let passCount = 0;
   const bike = BIKES[G.selectedBike];
   const weapon = WEAPONS.find(w=>w.id===G.equippedWeapon);
 
@@ -738,6 +741,7 @@ function update(dt) {
 
 function performAttack(attacker, weapon, reach, distLimit, dmgBase, withWeapon=false) {
   let hit = false;
+  let R = G.race;
   G.opponents.forEach(o => {
     if (o.knocked > 0) return;
     const d = dist(attacker, o);
@@ -1059,7 +1063,6 @@ function updateHUD() {
 }
 
 // ==================== END RACE ====================
-let passCount = 0;
 function endRace() {
   sfx('engineStop');
   G.engineOn = false;
