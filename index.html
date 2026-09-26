@@ -82,7 +82,7 @@ body {
 .dmg-fill { height: 100%; background: #ff3333; transition: width 0.2s; }
 .hud-bottom-right { text-align: right; }
 #volumeControl {
-  position: absolute; top: 10px; right: 10px; z-index: 15; display: none; font-size: 12px; color: white;
+  position: absolute; bottom: 10px; right: 10px; z-index: 15; display: none; font-size: 12px; color: white;
 }
 #volumeControl input { width: 70px; }
 .shop-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; max-width: 540px; width: 100%; }
@@ -100,7 +100,7 @@ body {
       </div>
       <div class="hud-panel" style="text-align:center;">
         <div id="hudWeapon">No Weapon</div>
-        <div style="font-size:11px;color:#aaa;">LAP <span id="hudLap">1</span>/<span id="hudLapTotal">3</span></div>
+        <div style="font-size:11px;color:#aaa;">HAZARD <span id="hudHazard">0</span>%</div>
       </div>
       <div class="hud-panel hud-bottom-right">
         <div>DAMAGE</div>
@@ -127,7 +127,7 @@ body {
       <strong>CONTROLS</strong><br>
       ⬆️ <strong>Accelerate</strong> &nbsp; ⬇️ <strong>Brake</strong> &nbsp; ⬅️ ➡️ <strong>Steer</strong><br>
       SPACE <strong>Punch</strong> &nbsp; K <strong>Kick</strong> &nbsp; W <strong>Use Weapon</strong><br>
-      P <strong>Pause</strong> &nbsp; B <strong>Brake+Weapon</strong>
+      P <strong>Pause</strong>
     </div>
     <button class="btn" id="btnStart">START CHAMPIONSHIP</button>
   </div>
@@ -217,20 +217,76 @@ const ROBOTS = [
 ];
 
 // ==================== STATE ====================
+const SAVE_KEY = 'road-rash-save-v1';
+function freshDmg() { return { head:0, body:0, arms:0, legs:0, bike:0 }; }
+
 let G = {};
 function resetGame() {
   G = {
-    screen: 'start', running: false, paused: false, frame: 0,
+    running: false, paused: false, frame: 0, rafId: 0, lastTs: 0,
     wallet: 2500, purchasedBikes: ['cro'], purchasedWeapons: ['fist'],
     selectedBike: 'cro', selectedTrack: 0,
     equippedWeapon: 'fist',
-    bike: null, tracksUnlocked: [0,1], unlockedBikes: ['cro'],
+    tracksUnlocked: [0],
     race: null, player: null, opponents: [],
-    obstacles: [], particles: [], skids: [], cameraShake: 0,
-    keys: {}, lastTime: 0
+    obstacles: [], particles: [], skids: [],
+    score: 0, upgradeCount: 0, carriedDmg: freshDmg(), position: 1,
+    keys: {}
   };
 }
 resetGame();
+loadGame();
+
+// ==================== SAVE / LOAD ====================
+function saveGame() {
+  try {
+    localStorage.setItem(SAVE_KEY, JSON.stringify({
+      wallet: G.wallet,
+      purchasedBikes: G.purchasedBikes,
+      purchasedWeapons: G.purchasedWeapons,
+      tracksUnlocked: G.tracksUnlocked,
+      equippedWeapon: G.equippedWeapon,
+      selectedBike: G.selectedBike,
+      upgradeCount: G.upgradeCount,
+      carriedDmg: G.carriedDmg
+    }));
+  } catch (e) {}
+}
+
+function loadGame() {
+  try {
+    const raw = localStorage.getItem(SAVE_KEY);
+    if (!raw) return;
+    const d = JSON.parse(raw);
+    if (!d || typeof d !== 'object') return;
+
+    // Saves are user-editable, so validate every field before trusting it
+    if (typeof d.wallet === 'number' && isFinite(d.wallet) && d.wallet >= 0) G.wallet = Math.floor(d.wallet);
+    if (Array.isArray(d.purchasedBikes)) {
+      const list = d.purchasedBikes.filter(k => BIKES[k]);
+      if (list.length) G.purchasedBikes = list;
+    }
+    if (Array.isArray(d.purchasedWeapons)) {
+      const list = d.purchasedWeapons.filter(k => WEAPONS.some(w => w.id === k));
+      if (list.length) G.purchasedWeapons = list;
+    }
+    if (Array.isArray(d.tracksUnlocked)) {
+      const list = d.tracksUnlocked.filter(id => TRACKS.some(t => t.id === id));
+      if (list.length) G.tracksUnlocked = list;
+    }
+    if (d.equippedWeapon && WEAPONS.some(w => w.id === d.equippedWeapon)) G.equippedWeapon = d.equippedWeapon;
+    if (d.selectedBike && BIKES[d.selectedBike]) G.selectedBike = d.selectedBike;
+    if (typeof d.upgradeCount === 'number' && isFinite(d.upgradeCount)) G.upgradeCount = Math.max(0, Math.floor(d.upgradeCount));
+    if (d.carriedDmg && typeof d.carriedDmg === 'object') {
+      for (const k in G.carriedDmg) {
+        const v = Number(d.carriedDmg[k]);
+        if (isFinite(v)) G.carriedDmg[k] = clamp(v, 0, 100);
+      }
+    }
+    if (!G.purchasedBikes.includes(G.selectedBike)) G.purchasedBikes.push(G.selectedBike);
+    if (!G.purchasedWeapons.includes(G.equippedWeapon)) G.purchasedWeapons.push(G.equippedWeapon);
+  } catch (e) {}
+}
 
 // ==================== AUDIO ====================
 function initAudio() {
@@ -249,7 +305,7 @@ function playTone(freq, type, dur, vol=0.3, slide=0) {
     const o = audioCtx.createOscillator();
     const g = audioCtx.createGain();
     o.type = type; o.frequency.value = freq;
-    g.gain.setValueAtTime(vol * masterVol, audioCtx.currentTime);
+    g.gain.setValueAtTime(vol, audioCtx.currentTime);
     g.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + dur);
     if (slide) o.frequency.linearRampToValueAtTime(freq + slide, audioCtx.currentTime + dur);
     o.connect(g); g.connect(masterGain);
@@ -271,7 +327,7 @@ function sfx(type) {
         const g = audioCtx.createGain(); const f = audioCtx.createBiquadFilter();
         o1.type='sawtooth'; o1.frequency.value=55; o2.type='triangle'; o2.frequency.value=110;
         f.type='lowpass'; f.frequency.value=700; f.Q.value=2;
-        g.gain.value=0.12*masterVol;
+        g.gain.value=0.12;
         o1.connect(f); o2.connect(f); f.connect(g); g.connect(masterGain);
         o1.start(); o2.start(); G.engineNodes={o1,o2,g,f};
       }
@@ -301,6 +357,8 @@ function dist(a,b){return Math.hypot(a.x-b.x, a.y-b.y);}
 function rng(a,b){return a+Math.random()*(b-a);}
 function show(id){document.getElementById(id).classList.add('active');}
 function hide(id){document.getElementById(id).classList.remove('active');}
+function setHud(on){document.getElementById('hud').style.display = on ? 'block' : 'none';}
+function setVolCtl(on){document.getElementById('volumeControl').style.display = on ? 'block' : 'none';}
 
 // ==================== PARTICLES ====================
 function spawnSpark(x,y,vx,vy,count=8) {
@@ -324,12 +382,6 @@ function spawnExhaust(x,y) {
     size:rng(2,5), color:`rgba(60,60,60,${rng(0.3,0.6)})`
   });
 }
-function spawnBlood(x,y) {
-  for(let i=0;i<6;i++) G.particles.push({
-    x, y, vx:rng(-3,3), vy:rng(-4,0), life:1, decay:rng(0.02,0.04),
-    size:rng(2,5), color:'#cc0000'
-  });
-}
 function spawnGlow(x,y,color='#ffaa00') {
   G.particles.push({ x, y, vx:0, vy:0, life:1, decay:0.05, size:rng(10,25), color});
 }
@@ -348,9 +400,8 @@ document.addEventListener('keyup', e => {
 
 function togglePause() {
   G.paused = !G.paused;
-  hide('pauseScreen');
-  if (G.paused) show('pauseScreen');
-  else loop();
+  if (G.paused) { show('pauseScreen'); }
+  else { hide('pauseScreen'); startLoop(); }
 }
 
 document.getElementById('volSlider').addEventListener('input', e => setVol(parseFloat(e.target.value)));
@@ -358,14 +409,14 @@ document.getElementById('volSlider').addEventListener('input', e => setVol(parse
 // ==================== SCREENS ====================
 document.getElementById('btnStart').onclick = () => {
   initAudio(); show('bikeScreen'); hide('startScreen'); renderBikeSelect();
-  document.getElementById('volumeControl').style.display='block';
+  setVolCtl(true);
 };
 
 document.getElementById('btnBuyBike').onclick = () => {
   if (!G.selectedBike) return;
   if (!G.purchasedBikes.includes(G.selectedBike)) {
     const pr = BIKES[G.selectedBike].price;
-    if (G.wallet >= pr) { G.wallet -= pr; G.purchasedBikes.push(G.selectedBike); sfx('buy'); }
+    if (G.wallet >= pr) { G.wallet -= pr; G.purchasedBikes.push(G.selectedBike); sfx('buy'); saveGame(); }
     else return;
   }
   show('trackScreen'); hide('bikeScreen'); renderTrackSelect();
@@ -437,28 +488,28 @@ function renderShop() {
       ${owned ? '<p style="color:#50c878;">✅ OWNED</p>' : `<p class="price-tag">$${w.price}</p>`}
     `;
     card.onclick = () => {
-      if(!owned && G.wallet >= w.price) { G.wallet -= w.price; G.purchasedWeapons.push(w.id); G.equippedWeapon = w.id; sfx('buy'); renderShop(); }
-      else if(owned) { G.equippedWeapon = w.id; sfx('select'); renderShop(); }
+      if(!owned && G.wallet >= w.price) { G.wallet -= w.price; G.purchasedWeapons.push(w.id); G.equippedWeapon = w.id; sfx('buy'); renderShop(); saveGame(); }
+      else if(owned) { G.equippedWeapon = w.id; sfx('select'); renderShop(); saveGame(); }
     };
     grid.appendChild(card);
   });
-  // Repair Bike
+  // Repair Bike — clears the damage carried into the next race
   const rc = document.createElement('div');
-  rc.className = 'card'; rc.innerHTML = `<h3>🔧 Repair Bike</h3><p class="price-tag">$500</p><p style="color:#aaa;">Full restore health</p>`;
+  rc.className = 'card'; rc.innerHTML = `<h3>🔧 Repair Bike</h3><p class="price-tag">$500</p><p style="color:#aaa;">Clears ${Math.round(Object.values(G.carriedDmg).reduce((a,b)=>a+b,0))} carried damage</p>`;
   rc.onclick = () => {
     if(G.wallet >= 500) {
       G.wallet -= 500;
-      const p = G.race.player;
-      p.dmg.head=0; p.dmg.body=0; p.dmg.arms=0; p.dmg.legs=0; p.dmg.bike=0;
-      sfx('buy'); renderShop();
+      G.carriedDmg = freshDmg();
+      if (G.player) G.player.dmg = freshDmg();
+      sfx('buy'); renderShop(); saveGame();
     }
   };
   grid.appendChild(rc);
   // Upgrade
   const uc = document.createElement('div');
-  uc.className = 'card'; uc.innerHTML = `<h3>⬆️ Upgrade Bike</h3><p class="price-tag">$1500</p><p style="color:#aaa;">+Max speed, reduce damage</p>`;
+  uc.className = 'card'; uc.innerHTML = `<h3>⬆️ Upgrade Bike</h3><p class="price-tag">$1500</p><p style="color:#aaa;">+Max speed, reduce damage — Lv.${G.upgradeCount||0}</p>`;
   uc.onclick = () => {
-    if(G.wallet >= 1500) { G.wallet -= 1500; G.race.player.upgradeCount = (G.race.player.upgradeCount||0)+1; sfx('buy'); renderShop(); }
+    if(G.wallet >= 1500) { G.wallet -= 1500; G.upgradeCount = (G.upgradeCount||0)+1; sfx('buy'); renderShop(); saveGame(); }
   };
   grid.appendChild(uc);
 }
@@ -468,14 +519,13 @@ function startRace(trackIdx) {
   initAudio();
   const trk = TRACKS[trackIdx];
   const bike = BIKES[G.selectedBike];
-  const weapon = WEAPONS.find(w=>w.id===G.equippedWeapon);
 
   G.running = true; G.paused = false; G.resultShown = false; G.frame = 0;
   G.selectedTrack = trackIdx;
-  G.particles = []; G.skids = []; G.cameraShake = 0;
+  G.score = 0;
+  G.particles = []; G.skids = [];
 
-  const statsMul = 1 + (G.race && G.race.player ? (G.race.player.upgradeCount||0)*0.05 : 0);
-  const prevUpgradeCount = G.race && G.race.player ? (G.race.player.upgradeCount||0) : 0;
+  const statsMul = 1 + (G.upgradeCount || 0) * 0.05;
 
   G.race = {
     track: trk, trackIdx,
@@ -489,18 +539,17 @@ function startRace(trackIdx) {
     cameraShake: 0,
     weather: trk.dust ? 'sand' : (trk.id===3 ? 'neon' : 'normal'),
     hitCooldown: 0,
-    weaponCooldown: 0,
-    punchCooldown: 0,
-    kickCooldown: 0,
-    boost: 0
+    punchCd: 0,
+    kickCd: 0,
+    weaponCd: 0
   };
 
   G.player = {
     x: W/2, y: 480, tilt: 0, speed: 0,
-    dmg: { head:0, body:0, arms:0, legs:0, bike:0 },
+    dmg: Object.assign(freshDmg(), G.carriedDmg),
     attackFrame: 0, attackType: null,
-    weaponHitsLeft: 0, weaponStunLeft: 0,
-    upgradeCount: prevUpgradeCount
+    weaponHitsLeft: 0,
+    upgradeCount: G.upgradeCount || 0
   };
 
   G.opponents = [];
@@ -514,8 +563,8 @@ function startRace(trackIdx) {
       color: robot.color,
       name: robot.name,
       spdFactor: robot.spd,
-      spin: 0, knocked: 0, attackCd: 0,
-      dmg: { head:0, body:0, arms:0, legs:0, bike:0 }
+      spin: 0, knocked: 0, attackCd: 0, scored: false,
+      dmg: freshDmg()
     });
   }
 
@@ -525,14 +574,9 @@ function startRace(trackIdx) {
 
   G.race.player = G.player;
 
-  hide('hud');
-  document.getElementById('hud').style.display='block';
-  hide('volumeControl');
-  document.getElementById('volumeControl').style.display='block';
+  setHud(true);
   sfx('engine');
-
-  if (!G.engineOn) { G.engineOn = true; }
-  loop();
+  startLoop();
 }
 
 const ROAD_X = (W-600)/2;
@@ -540,18 +584,17 @@ const ROAD_W = 600;
 const LANE_W = ROAD_W/5;
 
 // ==================== UPDATE ====================
-function update(dt) {
+function update() {
   if (!G.running || G.paused) return;
   let R = G.race || {};
   let P = G.player;
   let passCount = 0;
-  const bike = BIKES[G.selectedBike];
   const weapon = WEAPONS.find(w=>w.id===G.equippedWeapon);
 
   // Stat degradation from damage
   const totalDmg = Object.values(P.dmg).reduce((a,b)=>a+b,0);
   const dmgMult = 1 - Math.min(0.6, totalDmg/500);
-  const maxSpd = R.maxSpdBase * dmgMult + (R.boost||0);
+  const maxSpd = R.maxSpdBase * dmgMult;
   const accel = R.accel * dmgMult;
   const handle = R.handling * dmgMult;
   const brake = R.brake;
@@ -561,9 +604,6 @@ function update(dt) {
   else if (G.keys['arrowdown']) { P.speed -= brake; }
   else { P.speed -= R.friction; }
   P.speed = clamp(P.speed, 0, maxSpd);
-
-  // Boost (tap brake then gas or just hold gas very long?)
-  // Quick boost: Space while at high speed triggers burst? Let's make SPACE punch, K kick, W weapon, no boost key for clarity
 
   if (P.speed > 2) {
     const steer = 3.5 * handle * (P.speed / maxSpd);
@@ -580,7 +620,8 @@ function update(dt) {
   }
 
   P.x = clamp(P.x, ROAD_X + 20, ROAD_X + ROAD_W - 20);
-  R.distance += P.speed / 60;
+  // Speed is displayed in km/h, so convert to m/s before accumulating distance
+  R.distance += P.speed / 3.6 / 60;
 
   // Skid marks
   if (G.keys['arrowdown'] && P.speed > 50 && onRoad) {
@@ -607,24 +648,24 @@ function update(dt) {
   if (R.weaponCd > 0) R.weaponCd--;
   if (R.hitCooldown > 0) R.hitCooldown--;
 
-  // Player attack
+  // Player attack wind-up
   P.attackFrame = clamp(P.attackFrame - 1, 0, 10);
-  if (P.attackFrame > 0 && P.attackType === 'weapon') {
-    // Weapon active duration
-  }
 
-  // Attack inputs
+  // Attack inputs: reach is the lateral window, range the overall reach
   if (G.keys[' '] && R.punchCd <= 0) {
     R.punchCd = 18; P.attackFrame = 10; P.attackType = 'punch';
-    performAttack(P, weapon, 0.8, 40, 20);
+    performAttack(P, weapon, 55, 75, 20);
   }
   if (G.keys['k'] && R.kickCd <= 0) {
     R.kickCd = 28; P.attackFrame = 14; P.attackType = 'kick';
-    performAttack(P, weapon, 1.0, 55, 30);
+    performAttack(P, weapon, 65, 85, 30);
   }
   if (G.keys['w'] && R.weaponCd <= 0) {
-    R.weaponCd = 35; P.attackFrame = 16; P.attackType = 'weapon';
-    performAttack(P, weapon, 1.4, weapon.range, weapon.dmg, true);
+    const followUp = (P.weaponHitsLeft || 0) > 0; // multi-hit weapons get a quick chain
+    R.weaponCd = followUp ? 14 : 35;
+    P.attackFrame = 16; P.attackType = 'weapon';
+    performAttack(P, weapon, weapon.range, weapon.range + 30, weapon.dmg, true);
+    if (followUp) P.weaponHitsLeft--;
   }
 
   // Hit flash on player
@@ -652,6 +693,8 @@ function update(dt) {
       }
     }
     o.y += (P.speed - o.speed * o.spdFactor) / 22;
+    // Keep rivals anchored relative to the player instead of drifting off forever
+    o.y = clamp(o.y, -800, H + 150);
 
     // Collision with player
     if (R.hitCooldown <= 0 && !G.paused) {
@@ -670,7 +713,8 @@ function update(dt) {
       }
     }
 
-    if (o.y > H + 150) { G.score = (G.score||0) + 150; }
+    // Award the overtake bonus once per rival per race (rivals are clamped at H+150)
+    if (o.y >= H + 150 && !o.scored) { o.scored = true; G.score = (G.score||0) + 150; }
     if (o.y > P.y) passCount++;
   });
   G.position = G.opponents.length - passCount + 1;
@@ -683,8 +727,9 @@ function update(dt) {
     });
   }
 
-  // Update obstacles
-  G.obstacles.forEach((obs,i) => {
+  // Update obstacles (backwards so removals don't skip entries)
+  for (let i = G.obstacles.length - 1; i >= 0; i--) {
+    const obs = G.obstacles[i];
     obs.y += P.speed / 22;
     if (Math.abs(P.x - obs.x) < 30 && Math.abs(P.y - obs.y) < 35 && !G.paused) {
       if (obs.type === 'oil') {
@@ -694,10 +739,11 @@ function update(dt) {
         applyDamage(P, 'bike', 8); P.speed *= 0.85; sfx('crash');
         spawnSpark(P.x, P.y, rng(-5,5), rng(-5,5), 10);
         G.obstacles.splice(i,1);
+        continue;
       }
     }
     if (obs.y > H + 100) G.obstacles.splice(i,1);
-  });
+  }
 
   // Camera shake decay
   if (R.cameraShake > 0) R.cameraShake *= 0.85;
@@ -710,9 +756,6 @@ function update(dt) {
   // Particles
   G.particles.forEach(p => {
     p.x += p.vx; p.y += p.vy; p.life -= p.decay;
-    if (p.color && p.color.startsWith && p.color.startsWith('rgba')) {
-      // exhaust handled
-    }
   });
   G.particles = G.particles.filter(p => p.life > 0);
 
@@ -755,7 +798,7 @@ function performAttack(attacker, weapon, reach, distLimit, dmgBase, withWeapon=f
       const actualDmg = dmgBase + (weapon ? weapon.dmg * (withWeapon?1:0.2) : 10);
       applyDamage(o, 'body', actualDmg);
       applyDamage(o, 'head', actualDmg*0.3);
-      o.knocked = 30;
+      o.knocked = 30 + (withWeapon && weapon ? weapon.stun : 0);
       o.spin = (attacker.x > o.x ? 1 : -1) * rng(0.2,0.5);
       o.speed *= 0.5;
       R.cameraShake = 4;
@@ -766,11 +809,9 @@ function performAttack(attacker, weapon, reach, distLimit, dmgBase, withWeapon=f
       } else {
         spawnSpark(o.x, o.y-20, rng(-3,3), rng(-3,0), 8);
       }
-      if (weapon && withWeapon && weapon.hits > 1 && (attacker.weaponHitsLeft||0) <= 0) {
+      if (weapon && withWeapon && weapon.hits > 1) {
+        // Multi-hit weapons bank a quick follow-up swing
         attacker.weaponHitsLeft = weapon.hits - 1;
-        attacker.weaponStunLeft = weapon.stun;
-        R.weaponCd = 0; // allow rapid followup
-        // But we decrement hits over time? For simplicity just require re-press for second hit or chain
       }
     }
   });
@@ -884,9 +925,7 @@ function draw() {
   // Particles
   G.particles.forEach(p => {
     ctx.globalAlpha = p.life;
-    if (p.color.startsWith('rgba')) {
-      if (!p._set) { ctx.fillStyle = p.color; p._set = 1; }
-    } else ctx.fillStyle = p.color;
+    ctx.fillStyle = p.color;
     ctx.beginPath(); ctx.arc(p.x, p.y, p.size, 0, Math.PI*2); ctx.fill();
   });
   ctx.globalAlpha = 1;
@@ -895,19 +934,7 @@ function draw() {
 
   // HUD
   if (G.player && !G.paused) {
-    const pd = G.player.dmg;
-    document.getElementById('hudSpeed').textContent = Math.floor(G.player.speed);
-    document.getElementById('hudDist').textContent = Math.floor(G.race.distance) + 'm / ' + G.race.track.length + 'm';
-    document.getElementById('hudWallet').textContent = G.wallet;
-    document.getElementById('hudPos').textContent = G.position;
-    document.getElementById('hudTotal').textContent = 1 + G.opponents.length;
-    document.getElementById('dmgHead').style.width = Math.max(0,100-pd.head*3)+'%';
-    document.getElementById('dmgBody').style.width = Math.max(0,100-pd.body*2)+'%';
-    document.getElementById('dmgArms').style.width = Math.max(0,100-pd.arms*3)+'%';
-    document.getElementById('dmgLegs').style.width = Math.max(0,100-pd.legs*3)+'%';
-    document.getElementById('dmgBike').style.width = Math.max(0,100-pd.bike*2)+'%';
-    const wep = WEAPONS.find(w=>w.id===G.equippedWeapon);
-    document.getElementById('hudWeapon').textContent = wep ? wep.name : 'No Weapon';
+    updateHUD();
 
     // Warning indicator
     if (G.race.warning > 40) {
@@ -978,7 +1005,7 @@ function drawBike(x, y, color, isPlayer, tilt, entity, isLocalPlayer) {
     const kickExt = (entity.attackFrame/14)*16;
     ctx.beginPath(); ctx.moveTo(4, 16); ctx.lineTo(14+kickExt, 8); ctx.stroke();
     ctx.fillStyle = '#222'; ctx.beginPath(); ctx.arc(18+kickExt, 6, 4, 0, Math.PI*2); ctx.fill();
-  } else if (isLocalPlayer && entity && entity.attackType === 'weapon' && entity.attackFrame > 0 && entity.weaponStunLeft > 0) {
+  } else if (isLocalPlayer && entity && entity.attackType === 'weapon' && entity.attackFrame > 0) {
     // Weapon swing (chain/mace)
     ctx.beginPath(); ctx.moveTo(6, armY+4); ctx.lineTo(14, armY); ctx.stroke();
     ctx.beginPath(); ctx.moveTo(-4, armY+4); ctx.lineTo(-10, armY+2); ctx.stroke();
@@ -1051,6 +1078,7 @@ function updateHUD() {
   document.getElementById('hudTotal').textContent = 1 + G.opponents.length;
   const w = WEAPONS.find(w=>w.id===G.equippedWeapon);
   document.getElementById('hudWeapon').textContent = w ? `${w.name} (W)` : 'No Weapon';
+  document.getElementById('hudHazard').textContent = Math.round(R.warning || 0);
   const pd = G.player.dmg;
   document.getElementById('dmgHead').style.width = Math.max(0,100-pd.head*3)+'%';
   document.getElementById('dmgBody').style.width = Math.max(0,100-pd.body*2)+'%';
@@ -1070,17 +1098,21 @@ function updateHUD() {
 // ==================== END RACE ====================
 function endRace() {
   sfx('engineStop');
-  G.engineOn = false;
   const R = G.race, P = G.player;
-  const moneyEarned = Math.floor(500 * (1 / G.position) + R.distance * 0.4 + Object.values(P.dmg).reduce((a,b)=>a+b,0) * 2);
-  const bonusMoney = Object.values(P.dmg).reduce((a,b)=>a+b,0) * 10; // compensation for damage
-  const totalMoney = moneyEarned + bonusMoney;
+  const totalDmg = Object.values(P.dmg).reduce((a,b)=>a+b,0);
+  const moneyEarned = Math.floor(500 * (1 / G.position) + R.distance * 0.4 + totalDmg * 2);
+  const bonusMoney = Math.round(totalDmg * 10); // compensation for damage
+  const totalMoney = Math.floor(moneyEarned + bonusMoney);
   G.wallet += totalMoney;
+
+  // Damage carries into the next race (repair it in the garage)
+  G.carriedDmg = Object.assign(freshDmg(), P.dmg);
+  saveGame();
 
   let title = '';
   if (G.position === 1) title = '🏆 VICTORY!';
   else title = `FINISHED P${G.position}`;
-  if (Object.values(P.dmg).reduce((a,b)=>a+b,0) > 150) title += ' - Banged Up';
+  if (totalDmg > 150) title += ' - Banged Up';
   if (P.dmg.head > 60) title = '🩸 KNOCKED COLD';
 
   document.getElementById('resTitle').textContent = title;
@@ -1088,31 +1120,54 @@ function endRace() {
   document.getElementById('resScore').textContent = `Score: ${(G.score||0) + Math.floor(R.distance)} | Top Speed: ${Math.floor(R.maxSpdBase)}`;
   document.getElementById('resMoney').textContent = `Earned: $${totalMoney} (Wallet: $${G.wallet})`;
   document.getElementById('resUnlock').textContent = '';
-  // Unlock next track
+  // Unlock next track — requires a top-half finish
   const next = TRACKS[R.trackIdx + 1];
   if (next && !G.tracksUnlocked.includes(next.id)) {
-    G.tracksUnlocked.push(next.id);
-    document.getElementById('resUnlock').textContent = `🔓 Unlocked: ${next.name}!`;
-    sfx('unlock');
+    const needed = Math.ceil((1 + G.opponents.length) / 2);
+    if (G.position <= needed) {
+      G.tracksUnlocked.push(next.id);
+      document.getElementById('resUnlock').textContent = `🔓 Unlocked: ${next.name}!`;
+      sfx('unlock');
+      saveGame();
+    } else {
+      document.getElementById('resUnlock').textContent = `Finish top ${needed} to unlock ${next.name}`;
+    }
   }
   document.getElementById('btnContinue').textContent = 'GARAGE';
-  show('resultScreen'); hide('hud');
-  document.getElementById('volumeControl').style.display='block';
+  show('resultScreen'); setHud(false);
   sfx(G.position === 1 ? 'finish' : 'wasted');
 }
 
 // ==================== LOOP ====================
-function loop() {
+const STEP_MS = 1000 / 60;
+
+function loop(ts) {
+  G.rafId = 0;
   if (!G.running || G.paused) return;
-  G.frame++;
-  update();
+  if (typeof ts !== 'number') ts = performance.now();
+  if (!G.lastTs) G.lastTs = ts;
+
+  // Fixed 60Hz simulation steps so timing is identical on any refresh rate
+  let steps = Math.floor((ts - G.lastTs) / STEP_MS);
+  if (steps > 4) { steps = 4; G.lastTs = ts - steps * STEP_MS; }
+  if (steps > 0) {
+    G.lastTs += steps * STEP_MS;
+    for (let i = 0; i < steps; i++) {
+      G.frame++;
+      update();
+      if (!G.running) break;
+    }
+  }
+
   draw();
-  if (G.running) requestAnimationFrame(loop);
-  else updateHUD();
+  if (G.running) G.rafId = requestAnimationFrame(loop);
 }
 
-// Initial HUD setup
-document.getElementsByClassName('hud-top')[0]?.style && (document.getElementsByClassName('hud-top')[0].style.display='none');
+function startLoop() {
+  if (G.rafId) return;   // guard against a second concurrent loop chain
+  G.lastTs = 0;
+  G.rafId = requestAnimationFrame(loop);
+}
 
 // Prevent default for game keys
 window.addEventListener('keydown', e => {
